@@ -1,0 +1,68 @@
+[package]
+name = "typingsucks"
+version = "0.1.0"
+edition = "2021"
+description = "Hold-to-talk voice transcription daemon"
+
+[dependencies]
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Config
+serde = { version = "1", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
+
+# Audio
+cpal = "0.15"
+ringbuf = "0.4"
+rubato = "0.16"
+
+# Whisper
+whisper-rs = "0.13"
+
+# Noise suppression
+nnnoiseless = "0.2"
+
+# Clipboard & Paste
+arboard = { version = "3", features = ["wayland-data-control"] }
+
+# UI
+eframe = { version = "0.29", default-features = false, features = ["wgpu", "wayland", "x11"] }
+
+# Model download
+reqwest = { version = "0.12", features = ["stream", "blocking", "multipart", "json"] }
+indicatif = "0.17"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+futures-util = "0.3"
+
+# Channels & sync
+crossbeam-channel = "0.5"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Process management
+ctrlc = "3"
+libc = "0.2"
+
+# JSON parsing (for API model listing)
+serde_json = "1"
+
+# Errors
+anyhow = "1"
+thiserror = "2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.12"
+enigo = { version = "0.2", features = ["wayland", "x11rb"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+enigo = "0.2"
+
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+opt-level = 3
