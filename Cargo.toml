@@ -15,7 +15,6 @@ dirs = "5"
 
 # Audio
 cpal = "0.15"
-ringbuf = "0.4"
 rubato = "0.16"
 
 # Whisper

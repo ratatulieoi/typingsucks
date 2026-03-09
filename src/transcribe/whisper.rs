@@ -48,8 +48,10 @@ impl WhisperTranscriber {
         params.set_print_timestamps(false);
         params.set_suppress_blank(true);
         params.set_no_context(true);
-        // Single segment for short audio
-        params.set_single_segment(true);
+        // Allow multi-segment transcription for longer recordings
+        params.set_single_segment(false);
+        // Suppress non-speech tokens to prevent hallucinations like "hai"
+        params.set_suppress_non_speech_tokens(true);
 
         state
             .full(params, samples)
@@ -61,10 +63,18 @@ impl WhisperTranscriber {
         let mut text = String::new();
         for i in 0..num_segments {
             if let Ok(segment) = state.full_get_segment_text(i) {
-                text.push_str(segment.trim());
-                if i < num_segments - 1 {
+                let seg_text = segment.trim();
+                // Skip hallucinated segments (common whisper artifacts)
+                if seg_text.is_empty()
+                    || seg_text == "[BLANK_AUDIO]"
+                    || seg_text == "."
+                {
+                    continue;
+                }
+                if !text.is_empty() {
                     text.push(' ');
                 }
+                text.push_str(seg_text);
             }
         }
 

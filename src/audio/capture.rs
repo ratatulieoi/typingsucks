@@ -1,18 +1,14 @@
 use anyhow::{Context, Result};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{Device, SampleFormat, Stream};
-use ringbuf::traits::{Consumer, Observer, Producer, Split};
-use ringbuf::HeapRb;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tracing::{error, info, warn};
-
-const RING_BUFFER_SECONDS: usize = 30;
 
 pub struct AudioCapture {
     #[allow(dead_code)] // kept alive for Drop — stops recording when dropped
     stream: Stream,
-    consumer: ringbuf::HeapCons<f32>,
+    buffer: Arc<Mutex<Vec<f32>>>,
     recording: Arc<AtomicBool>,
     pub sample_rate: u32,
     pub channels: u16,
@@ -89,38 +85,42 @@ impl AudioCapture {
 
         let sample_rate = config.sample_rate().0;
         let channels = config.channels();
-        let buffer_size = sample_rate as usize * channels as usize * RING_BUFFER_SECONDS;
-        let rb = HeapRb::<f32>::new(buffer_size);
-        let (mut producer, consumer) = rb.split();
+
+        // Growable buffer — no recording length limit
+        let buffer = Arc::new(Mutex::new(Vec::<f32>::new()));
 
         let recording = Arc::new(AtomicBool::new(false));
-        let recording_flag = recording.clone();
 
         let err_fn = |err: cpal::StreamError| {
             error!("Audio stream error: {}", err);
         };
 
         let stream = match config.sample_format() {
-            SampleFormat::F32 => device.build_input_stream(
-                &config.into(),
-                move |data: &[f32], _: &cpal::InputCallbackInfo| {
-                    if recording_flag.load(Ordering::Relaxed) {
-                        for &sample in data {
-                            let _ = producer.try_push(sample);
+            SampleFormat::F32 => {
+                let recording_flag = recording.clone();
+                let buf = buffer.clone();
+                device.build_input_stream(
+                    &config.into(),
+                    move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                        if recording_flag.load(Ordering::Relaxed) {
+                            if let Ok(mut b) = buf.try_lock() {
+                                b.extend_from_slice(data);
+                            }
                         }
-                    }
-                },
-                err_fn,
-                None,
-            )?,
+                    },
+                    err_fn,
+                    None,
+                )?
+            }
             SampleFormat::I16 => {
                 let recording_flag = recording.clone();
+                let buf = buffer.clone();
                 device.build_input_stream(
                     &config.into(),
                     move |data: &[i16], _: &cpal::InputCallbackInfo| {
                         if recording_flag.load(Ordering::Relaxed) {
-                            for &sample in data {
-                                let _ = producer.try_push(sample as f32 / i16::MAX as f32);
+                            if let Ok(mut b) = buf.try_lock() {
+                                b.extend(data.iter().map(|&s| s as f32 / i16::MAX as f32));
                             }
                         }
                     },
@@ -135,7 +135,7 @@ impl AudioCapture {
 
         Ok(AudioCapture {
             stream,
-            consumer,
+            buffer,
             recording,
             sample_rate,
             channels,
@@ -148,17 +148,13 @@ impl AudioCapture {
 
     pub fn stop_recording(&mut self) -> Vec<f32> {
         self.recording.store(false, Ordering::Relaxed);
-        let available = self.consumer.occupied_len();
-        let mut samples = Vec::with_capacity(available);
-        for _ in 0..available {
-            if let Some(s) = self.consumer.try_pop() {
-                samples.push(s);
-            }
-        }
-        samples
+        let mut buf = self.buffer.lock().unwrap();
+        std::mem::take(&mut *buf)
     }
 
     pub fn clear_buffer(&mut self) {
-        while self.consumer.try_pop().is_some() {}
+        let mut buf = self.buffer.lock().unwrap();
+        buf.clear();
     }
 }
+
