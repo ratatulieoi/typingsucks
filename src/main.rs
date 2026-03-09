@@ -36,7 +36,7 @@ enum Commands {
 
 #[derive(Subcommand)]
 enum ModelCommands {
-    /// Download a model (tiny/base/small)
+    /// Download a model (tiny/base/small/medium/large-v3-turbo)
     Download {
         #[arg(default_value = "base")]
         size: String,
@@ -45,6 +45,12 @@ enum ModelCommands {
     List,
     /// Show currently active model
     Active,
+    /// Scan for existing whisper models on disk and import them
+    Scan {
+        /// Auto-import all found models without asking
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
@@ -79,6 +85,27 @@ fn main() -> anyhow::Result<()> {
                 let cfg = config::Config::load()?;
                 let path = model::resolve_model_path(&cfg)?;
                 println!("Active model: {}", path.display());
+            }
+            ModelCommands::Scan { yes } => {
+                let found = model::scan_for_models();
+                if found.is_empty() {
+                    println!("No new models found on disk.");
+                } else {
+                    println!("Found {} model(s):", found.len());
+                    for m in &found {
+                        println!("  {} ({}MB) — {}", m.name, m.size_mb, m.path.display());
+                    }
+                    if yes {
+                        for m in &found {
+                            match model::import_model(&m.path, &m.name) {
+                                Ok(()) => println!("  ✓ Linked {}", m.name),
+                                Err(e) => println!("  ✗ Failed {}: {}", m.name, e),
+                            }
+                        }
+                    } else {
+                        println!("\nRun with --yes to import all, or use the GUI.");
+                    }
+                }
             }
         },
     }

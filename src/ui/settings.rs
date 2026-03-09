@@ -24,6 +24,12 @@ const MODEL_SIZES: &[(&str, u64)] = &[
     ("base.en", 142),
     ("small", 466),
     ("small.en", 466),
+    ("medium", 1500),
+    ("medium.en", 1500),
+    ("large-v1", 2900),
+    ("large-v2", 2900),
+    ("large-v3", 2900),
+    ("large-v3-turbo", 1600),
 ];
 
 struct DownloadState {
@@ -67,6 +73,8 @@ pub struct SettingsApp {
     api_model_idx: usize,
     api_tested_url: String,
     api_tested_key: String,
+    // Scan results: (model_name, source_path, size_mb)
+    scan_results: Vec<(String, std::path::PathBuf, u64)>,
 }
 
 fn user_in_input_group() -> bool {
@@ -132,6 +140,7 @@ impl SettingsApp {
             api_model_idx: 0,
             api_tested_url: String::new(),
             api_tested_key: String::new(),
+            scan_results: Vec::new(),
         }
     }
 
@@ -786,6 +795,54 @@ impl eframe::App for SettingsApp {
                 });
 
             ui.add_space(4.0);
+
+            // ── Scan for existing models (local mode only) ──
+            if self.config.transcription.mode == TranscriptionMode::Local
+                && self.download.is_none()
+            {
+                ui.collapsing("Scan for existing models", |ui| {
+                    if ui.button("Scan known directories").clicked() {
+                        let found = model::scan_for_models();
+                        self.scan_results = found
+                            .into_iter()
+                            .map(|m| (m.name, m.path, m.size_mb))
+                            .collect();
+                        if self.scan_results.is_empty() {
+                            self.status_msg = "No new models found on disk.".to_string();
+                        }
+                    }
+                    if !self.scan_results.is_empty() {
+                        ui.add_space(4.0);
+                        let mut to_import = None;
+                        for (i, (name, path, size_mb)) in self.scan_results.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{} ({}MB)", name, size_mb));
+                                if ui.small_button("Link").clicked() {
+                                    to_import = Some(i);
+                                }
+                            });
+                            ui.label(
+                                egui::RichText::new(format!("  {}", path.display()))
+                                    .size(11.0)
+                                    .color(egui::Color32::GRAY),
+                            );
+                        }
+                        if let Some(idx) = to_import {
+                            let (name, path, _) = &self.scan_results[idx];
+                            match model::import_model(path, name) {
+                                Ok(()) => {
+                                    self.status_msg = format!("Linked {} ✓", name);
+                                    self.scan_results.remove(idx);
+                                    self.refresh_models();
+                                }
+                                Err(e) => {
+                                    self.status_msg = format!("Link failed: {}", e);
+                                }
+                            }
+                        }
+                    }
+                });
+            }
 
             // ── Download extra models (local mode only) ──
             if self.config.transcription.mode == TranscriptionMode::Local
